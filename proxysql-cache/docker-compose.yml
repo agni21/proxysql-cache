@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  proxysql:
+    image: proxysql/proxysql:latest
+    container_name: proxysql-cache
+    ports:
+      - "6033:6033"   # MySQL client connections
+      - "6032:6032"   # ProxySQL admin interface
+      - "6070:6070"   # Prometheus metrics (REST API)
+    volumes:
+      - ./proxysql.cnf:/etc/proxysql.cnf:ro
+      - proxysql-data:/var/lib/proxysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "6033", "-u", "${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    environment:
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  proxysql-data:
+    name: proxysql-cache-data
