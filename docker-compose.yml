@@ -1,6 +1,35 @@
 name: proxysql-cache
 
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-local
+    profiles: [local]
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - ./import-dump.sh:/docker-entrypoint-initdb.d/import-dump.sh:ro
+      - ${DUMP_PATH}:/tmp/dump/production.gz:ro
+      - ./mysql.cnf:/etc/mysql/conf.d/mysql.cnf:ro
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s   # allow time for dump import
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   proxysql:
     image: proxysql/proxysql:latest
     container_name: proxysql-cache
@@ -28,5 +57,7 @@ services:
         max-file: "3"
 
 volumes:
+  mysql-data:
+    name: mysql-local-data
   proxysql-data:
     name: proxysql-cache-data
