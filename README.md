@@ -166,11 +166,26 @@ mysql -h 127.0.0.1 -P 6032 -u admin -padmin < init.sql
 
 ---
 
-## Persistent Cache
+## Persistence
 
-Cache data survives container restarts via the Docker named volume `proxysql-cache-data`.
+ProxySQL uses two separate persistence mechanisms:
 
-To completely reset the cache and all state:
+### Configuration persistence (survives restarts ✅)
+
+All configuration changes made via the admin interface and saved with `SAVE ... TO DISK` are written to `/var/lib/proxysql/proxysql.db` (SQLite) inside the container. This file lives on the Docker named volume `proxysql-cache-data` and survives `docker compose down/up`.
+
+This includes:
+- Query rules (`SAVE MYSQL QUERY RULES TO DISK`)
+- User settings like `transaction_persistent` (`SAVE MYSQL USERS TO DISK`)
+- Global variables like monitor timeouts (`SAVE MYSQL VARIABLES TO DISK`)
+
+### Query result cache (in-memory only ⚠️)
+
+The cached SELECT query responses are stored in RAM only. After a container restart the result cache starts empty and warms up as queries come in. This is expected ProxySQL behavior — the query result cache is not written to disk.
+
+### Reset everything
+
+To wipe both config and cache state:
 
 ```bash
 docker compose down
