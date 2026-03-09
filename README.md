@@ -13,7 +13,13 @@ Spring Boot App
       │            [Query Cache]
       │                  │
       ▼                  ▼
-  AWS RDS (us-east-2)
+  ┌─────────────────────────────────────────┐
+  │  MySQL backend (choose one):            │
+  │                                         │
+  │  A) AWS RDS (remote)                    │
+  │  B) mysql:8.0 container (local dump)    │
+  │  C) Externally managed local MySQL      │
+  └─────────────────────────────────────────┘
 ```
 
 ## Prerequisites
@@ -29,20 +35,56 @@ Spring Boot App
 ```bash
 cd proxysql-cache
 cp .env.example .env
-# Edit .env with your actual database credentials
+# Edit .env — pick one of the three modes below
 ```
 
-### 2. Start ProxySQL
+#### Mode A — Remote MySQL (RDS or any external host)
+
+```dotenv
+MYSQL_HOST=your-rds-hostname.region.rds.amazonaws.com
+MYSQL_PORT=3306
+MYSQL_DATABASE=production
+MYSQL_USER=your_username
+MYSQL_PASSWORD=your_password
+```
+
+#### Mode B — Local MySQL Docker container bootstrapped from a dump
+
+A `mysql:8.0` container is spun up automatically and the dump is imported on first boot. Subsequent starts reuse the persisted volume — no re-import.
+
+```dotenv
+MYSQL_HOST=mysql
+MYSQL_PORT=3306
+MYSQL_DATABASE=production
+MYSQL_USER=your_username
+MYSQL_PASSWORD=your_password
+DUMP_PATH=/path/to/your/dump.gz
+```
+
+> **Note:** `ONLY_FULL_GROUP_BY` is disabled in `mysql.cnf` to match the permissive sql_mode used by RDS, which legacy GROUP BY queries require.
+
+#### Mode C — Externally managed local MySQL (already running on your machine)
+
+```dotenv
+MYSQL_HOST=host.docker.internal   # lets the ProxySQL container reach your host
+MYSQL_PORT=3306
+MYSQL_DATABASE=production
+MYSQL_USER=your_username
+MYSQL_PASSWORD=your_password
+```
+
+### 2. Start
 
 ```bash
 ./start.sh
 ```
 
-This will:
-- Validate your `.env`
+`start.sh` will:
+- Detect which mode is active based on `MYSQL_HOST`
+- Validate `DUMP_PATH` exists (Mode B only)
 - Generate `proxysql.cnf` from the template
-- Start the Docker container
-- Wait until ProxySQL is healthy
+- Start the MySQL container and import the dump if needed (Mode B)
+- Start ProxySQL and wait until healthy
 - Print connection details
 
 ### 3. Connect your Spring Boot app
@@ -226,14 +268,16 @@ docker logs --tail 100 proxysql-cache
 
 ```
 proxysql-cache/
-├── .env.example          # Template for credentials (committed)
+├── .env.example          # Template for credentials — documents all three modes
 ├── .env                  # Actual credentials (gitignored)
 ├── .gitignore
-├── docker-compose.yml    # Docker service definition
-├── proxysql.cnf.template # Config template with ${VAR} placeholders
+├── docker-compose.yml    # ProxySQL + optional local MySQL service (profile: local)
+├── proxysql.cnf.template # ProxySQL config template with ${VAR} placeholders
 ├── proxysql.cnf          # Generated config (gitignored, contains secrets)
+├── mysql.cnf             # MySQL server config — disables ONLY_FULL_GROUP_BY
+├── import-dump.sh        # Init script: imports DUMP_PATH into local MySQL on first boot
 ├── init.sql              # Additional query rules for admin interface
-├── start.sh              # Start script with health check
+├── start.sh              # Start script: detects mode, health checks, prints summary
 ├── stop.sh               # Stop script
 └── README.md
 ```
@@ -242,14 +286,21 @@ proxysql-cache/
 
 ## Testing Checklist
 
-- [ ] `./start.sh` completes without errors
+**All modes**
+- [ ] `./start.sh` completes without errors and prints the correct backend host
 - [ ] `mysql -h 127.0.0.1 -P 6033 -u <user> -p -e "SELECT 1"`
 - [ ] `mysql -h 127.0.0.1 -P 6033 -u <user> -p -e "SELECT * FROM production.category LIMIT 1"`
-- [ ] Second identical query is noticeably faster
+- [ ] Second identical query is noticeably faster (cache hit)
 - [ ] Admin interface: `mysql -h 127.0.0.1 -P 6032 -u admin -padmin`
 - [ ] Cache stats show `Query_Cache_count_GET_OK > 0`
 - [ ] Spring Boot app starts with `localhost:6033` datasource URL
 - [ ] Cache survives `docker compose restart`
+
+**Mode B (local dump) only**
+- [ ] `docker logs mysql-local` shows `[import-dump] Import complete.` on first boot
+- [ ] Subsequent `./start.sh` reuses the volume without re-importing
+- [ ] `SHOW TABLES` via ProxySQL returns expected tables
+- [ ] Queries with non-aggregated GROUP BY columns succeed (ONLY_FULL_GROUP_BY disabled)
 
 ---
 

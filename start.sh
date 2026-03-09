@@ -55,6 +55,29 @@ for var in "${REQUIRED_VARS[@]}"; do
 done
 
 # -----------------------------------------------------------
+# Determine mode
+# -----------------------------------------------------------
+# Mode A (remote):   MYSQL_HOST = RDS/external hostname  → only ProxySQL starts
+# Mode B (local-dump): MYSQL_HOST = mysql + DUMP_PATH set → local MySQL created from dump
+# Mode C (external-local): MYSQL_HOST = host.docker.internal or IP → only ProxySQL starts
+
+COMPOSE_ARGS=()
+if [[ "${MYSQL_HOST}" == "mysql" ]]; then
+    if [[ -z "${DUMP_PATH:-}" ]]; then
+        error "MYSQL_HOST=mysql requires DUMP_PATH to be set in .env"
+        exit 1
+    fi
+    if [[ ! -f "${DUMP_PATH}" ]]; then
+        error "Dump file not found: ${DUMP_PATH}"
+        exit 1
+    fi
+    COMPOSE_ARGS=(--profile local)
+    log "Mode: local MySQL (dump import from ${DUMP_PATH})"
+else
+    log "Mode: external MySQL (${MYSQL_HOST}:${MYSQL_PORT})"
+fi
+
+# -----------------------------------------------------------
 # 3. Generate proxysql.cnf from template
 # -----------------------------------------------------------
 log "Generating proxysql.cnf from template ..."
@@ -65,7 +88,7 @@ log "Config written to proxysql.cnf"
 # 4. Start docker-compose
 # -----------------------------------------------------------
 log "Starting ProxySQL container ..."
-docker compose up -d
+docker compose "${COMPOSE_ARGS[@]}" up -d
 
 # -----------------------------------------------------------
 # 5. Wait for healthy
@@ -110,7 +133,7 @@ echo ""
 echo ""
 log "${GREEN}ProxySQL is running!${NC}"
 echo ""
-echo -e "  ${BLUE}MySQL endpoint:${NC}  localhost:6033"
+echo -e "  ${BLUE}MySQL endpoint:${NC}  localhost:6033 → ${MYSQL_HOST}:${MYSQL_PORT}"
 echo -e "  ${BLUE}Admin endpoint:${NC}  localhost:6032"
 echo -e "  ${BLUE}Database:${NC}        ${MYSQL_DATABASE}"
 echo -e "  ${BLUE}Cache TTL:${NC}       $((CACHE_TTL_MS / 1000))s"
